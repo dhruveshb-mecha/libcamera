@@ -342,12 +342,12 @@ bool PipelineHandlerBase::updateStreamConfig(StreamConfiguration *stream,
 	}
 
 	if (stream->colorSpace != format.colorSpace) {
-		stream->colorSpace = format.colorSpace;
-		adjusted = true;
 		LOG(RPI, Debug)
 			<< "Color space changed from "
 			<< ColorSpace::toString(stream->colorSpace) << " to "
 			<< ColorSpace::toString(format.colorSpace);
+		stream->colorSpace = format.colorSpace;
+		adjusted = true;
 	}
 
 	stream->stride = format.planes[0].bpl;
@@ -878,6 +878,16 @@ int PipelineHandlerBase::registerCamera(std::unique_ptr<RPi::CameraData> &camera
 	data->ipa_->setLensControls.connect(data, &CameraData::setLensControls);
 	data->ipa_->metadataReady.connect(data, &CameraData::metadataReady);
 
+	/*
+	 * Disable the IPA signal to control timeout, when there is a
+	 * user-requested value. We do this here now that the IPA and
+	 * front end device are both initialized.
+	 */
+	if (data->config_.cameraTimeoutValue) {
+		data->ipa_->setCameraTimeout.disconnect();
+		data->frontendDevice()->setDequeueTimeout(data->config_.cameraTimeoutValue * 1ms);
+	}
+
 	return 0;
 }
 
@@ -1144,12 +1154,6 @@ int CameraData::loadPipelineConfiguration()
 
 	config_.cameraTimeoutValue =
 		phConfig["camera_timeout_value_ms"].get<unsigned int>(config_.cameraTimeoutValue);
-
-	if (config_.cameraTimeoutValue) {
-		/* Disable the IPA signal to control timeout and set the user requested value. */
-		ipa_->setCameraTimeout.disconnect();
-		frontendDevice()->setDequeueTimeout(config_.cameraTimeoutValue * 1ms);
-	}
 
 	config_.controllerMinFrameDurationUs =
 		phConfig["controller_min_frame_duration_us"].get<double>(config_.controllerMinFrameDurationUs);
