@@ -22,6 +22,7 @@ BuildRequires:  boost-devel
 BuildRequires:  libyaml-devel
 BuildRequires:  openssl-devel
 BuildRequires:  systemd-devel
+# Ensures we pull the custom GStreamer development files
 BuildRequires:  gstreamer-devel = %{gst_version}
 
 Requires:       gstreamer = %{gst_version}
@@ -48,6 +49,7 @@ the Comet libcamera package installed under /opt/libcamera.
 
 %build
 export CCACHE_DISABLE=1
+# Force Meson to find our custom GStreamer first
 export PKG_CONFIG_PATH=/opt/gstreamer/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
 
 meson setup builddir \
@@ -67,13 +69,20 @@ meson compile -C builddir %{?_smp_mflags}
 %install
 DESTDIR=%{buildroot} meson install -C builddir
 
+# Hard-Fail Validation: Ensure critical binaries were actually built
+test -f %{buildroot}/opt/libcamera/lib64/libcamera/ipa/ipa_rkisp1.so || { echo "FATAL: ipa_rkisp1.so missing"; exit 1; }
+test -f %{buildroot}/opt/libcamera/lib64/gstreamer-1.0/libgstlibcamera.so || { echo "FATAL: libgstlibcamera.so missing"; exit 1; }
+
+# Architecture Fix: Relocate the GStreamer plugin so it is natively discovered
+install -d %{buildroot}/opt/gstreamer/lib64/gstreamer-1.0
+mv %{buildroot}/opt/libcamera/lib64/gstreamer-1.0/libgstlibcamera.so %{buildroot}/opt/gstreamer/lib64/gstreamer-1.0/
+rm -rf %{buildroot}/opt/libcamera/lib64/gstreamer-1.0
+
 install -d %{buildroot}%{_sysconfdir}/profile.d
 cat > %{buildroot}%{_sysconfdir}/profile.d/libcamera.sh <<'EOF'
 if [ -z "${_COMET_LIBCAMERA_SETUP_DONE:-}" ]; then
   export PKG_CONFIG_PATH=/opt/libcamera/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-  export GST_PLUGIN_PATH=/opt/libcamera/lib64/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}
-  export GST_PLUGIN_PATH_1_0=/opt/libcamera/lib64/gstreamer-1.0${GST_PLUGIN_PATH_1_0:+:$GST_PLUGIN_PATH_1_0}
-  export GST_PLUGIN_SYSTEM_PATH=
+  export LD_LIBRARY_PATH=/opt/libcamera/lib64:/opt/gstreamer/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
   export _COMET_LIBCAMERA_SETUP_DONE=1
 fi
 EOF
@@ -86,6 +95,8 @@ EOF
 %files
 %license COPYING.rst LICENSES/*
 /opt/libcamera/
+# Explicitly track the relocated plugin so RPM uninstalls it cleanly
+/opt/gstreamer/lib64/gstreamer-1.0/libgstlibcamera.so
 %exclude /opt/libcamera/include
 %exclude /opt/libcamera/include/*
 %exclude /opt/libcamera/lib64/pkgconfig
@@ -105,3 +116,6 @@ EOF
 %changelog
 * Mon May 25 2026 Mecha Camera Build <build@mecha.local> - %{version}-%{release}
 - Package RkISP1 libcamera build from commit %{commit}.
+- Relocated libgstlibcamera.so directly to GStreamer plugin directory.
+- Removed GST_PLUGIN_PATH overrides to rely on native discovery.
+- Added explicit IPA and plugin validation checks.
